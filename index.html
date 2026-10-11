@@ -498,9 +498,9 @@ function orderForm(sup,preset){
 }
 function minBar(t,min){if(!min)return"";const ok=t>=min;return '<div class="bar"><i style="width:'+Math.min(100,t/min*100)+'%;background:'+(ok?'var(--ok)':'var(--need)')+'"></i></div><div class="'+(ok?'good':'warn')+'" style="margin-top:4px">'+(ok?'已達最低出貨金額 '+money(min):'還差 '+money(min-t)+' 才會出貨（最低 '+money(min)+'）')+'</div>'}
 function orderText(g){
-  const L=["【叫貨清單】","叫貨日期："+dateTw(g.date),"廠商："+g.supplier,"──────────"];
+  const L=["【叫貨清單】","叫貨日期："+dateTw(g.date),"──────────"];
   g.lines.forEach((o,i)=>{const it=itemById(o.itemId);L.push((i+1)+". "+(dc(it?.code)?it.code+" ":"")+o.name+" × "+num(o.qty)+(it?.unit||""))});
-  const nm=[db.shop,g.store].filter(Boolean).join(" ");L.push("──────────","共 "+g.lines.length+" 項");if(nm)L.push("店名："+nm);L.push("麻煩安排出貨，謝謝！");return L.join("\n")}
+  const nm=[db.shop,g.store].filter(Boolean).join(" ");L.push("──────────");if(nm)L.push("店名："+nm);L.push("麻煩安排出貨，謝謝！");return L.join("\n")}
 function orderSheet(no){
   const g=orderGroups().find(x=>x.no===no);if(!g){closeSheet();return}
   const txt=orderText(g);
