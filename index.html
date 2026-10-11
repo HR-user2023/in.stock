@@ -44,6 +44,7 @@ h1{font-size:20px;font-weight:900;margin:0;letter-spacing:.02em;color:var(--acce
 .chip{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 13px;font-size:14px;white-space:nowrap}
 .chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .chip b{color:var(--need);margin-left:2px}
+.chiplab{flex:none;align-self:center;font-size:12px;color:var(--soft);min-width:28px}
 .chip[aria-pressed="true"] b{color:inherit}
 .sum{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
 .sum button{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px 10px;text-align:left}
@@ -200,7 +201,7 @@ let me=store.get("ss.me","");
 const EMPTY={items:[],orders:[],moves:[],suppliers:[],shop:""};
 let db=Object.assign({},EMPTY,store.get("ss.db2",{}));
 let queue=store.get("ss.queue2",[]);
-let tab="stock",supF="",statusF="",orderAll=false,sheetOpen=false,syncing=false,lastErr="",dailyQty={},dailySup="";
+let tab="stock",supF="",catF="",dailyCat="",statusF="",orderAll=false,sheetOpen=false,syncing=false,lastErr="",dailyQty={},dailySup="";
 const save=()=>store.set("ss.db2",db);
 const findIn=(k,id)=>db[k].find(x=>String(x[k==="suppliers"?"name":"id"])===String(id));
 const itemById=id=>findIn("items",id);
@@ -269,13 +270,14 @@ function orderGroups(){
   db.orders.forEach(o=>{const k=o.orderNo||o.id;if(!g.has(k))g.set(k,{no:k,supplier:o.supplier,date:o.orderDate||dateStr(o.createdAt),created:num(o.createdAt),lines:[]});g.get(k).lines.push(o)});
   return [...g.values()].map(x=>{x.total=x.lines.reduce((a,o)=>a+num(o.qty)*num(o.price),0);x.actual=x.lines.reduce((a,o)=>a+amtOf(o),0);const n=x.lines.filter(o=>o.arrivedAt).length;x.state=n===0?"pend":n===x.lines.length?"done":"part";x.bad=x.lines.filter(o=>flags(o).length).length;return x}).sort((a,b)=>(b.date>a.date?1:b.date<a.date?-1:b.created-a.created));
 }
+const catOf=it=>CATS.includes(it.category)?it.category:"其他";
 const itemHay=it=>norm(it.name+" "+dc(it.code)+" "+it.supplier+" "+(it.category||""));
 
 /* ========== 庫存頁 ========== */
 function itemRow(it){const st=status(it),p=pendingOf(it);
-  return '<button class="row '+st+'" type="button" data-item="'+esc(it.id)+'"><div class="min"><div class="nm">'+esc(it.name)+'</div><div class="sub">'+esc([it.supplier,dc(it.code)].filter(Boolean).join(" · "))+'</div>'+pill[st]+'</div>'+
+  return '<button class="row '+st+'" type="button" data-item="'+esc(it.id)+'"><div class="min"><div class="nm">'+esc(it.name)+'</div><div class="sub">'+esc([it.supplier,catOf(it),dc(it.code)].filter(Boolean).join(" · "))+'</div>'+pill[st]+'</div>'+
   '<div class="qty"><b>'+num(it.count)+'</b> <span class="sub">'+esc(it.unit||"")+'</span><small>安全 '+num(it.safety)+(p?' · 在途 '+p:'')+'</small></div></button>'}
-function supChips(list,cur,attr,needCount){return list.length>1?'<div class="chips">'+['',...list].map(s=>{const n=s&&needCount?needCount(s):0;return '<button class="chip" type="button" data-'+attr+'="'+esc(s)+'" aria-pressed="'+(s===cur)+'">'+(s?esc(s):"全部")+(n?'<b>'+n+'</b>':'')+'</button>'}).join("")+'</div>':''}
+function supChips(list,cur,attr,needCount,lab){return list.length>(lab?0:1)?'<div class="chips">'+(lab?'<span class="chiplab">'+lab+'</span>':'')+['',...list].map(s=>{const n=s&&needCount?needCount(s):0;return '<button class="chip" type="button" data-'+attr+'="'+esc(s)+'" aria-pressed="'+(s===cur)+'">'+(s?esc(s):"全部")+(n?'<b>'+n+'</b>':'')+'</button>'}).join("")+'</div>':''}
 function renderStock(){
   const el=$("#view-stock"),q=$("#q").value,m=matcher(q),all=db.items;
   if(m){
@@ -287,11 +289,13 @@ function renderStock(){
   const sups=[...new Set(all.map(i=>i.supplier||"未填廠商"))].sort(byZh);if(supF&&!sups.includes(supF))supF="";
   const st=all.map(it=>({it,s:status(it)}));const cnt=s=>st.filter(x=>x.s===s).length;
   const value=all.reduce((a,it)=>a+num(it.count)*num(it.price),0);
-  let rows=st.filter(x=>(!supF||(x.it.supplier||"未填廠商")===supF)&&(!statusF||x.s===statusF));
+  const cats=CATS.filter(c=>all.some(i=>catOf(i)===c));if(catF&&!cats.includes(catF))catF="";
+  let rows=st.filter(x=>(!supF||(x.it.supplier||"未填廠商")===supF)&&(!catF||catOf(x.it)===catF)&&(!statusF||x.s===statusF));
   const rank={need:0,wait:1,ok:2};rows.sort((a,b)=>rank[a.s]-rank[b.s]||byZh(a.it.supplier,b.it.supplier)||byZh(a.it.name,b.it.name));
   el.innerHTML='<div class="sum"><button class="need" type="button" data-status="need" aria-pressed="'+(statusF==="need")+'"><b>'+cnt("need")+'</b><span>要補貨</span></button><button class="wait" type="button" data-status="wait" aria-pressed="'+(statusF==="wait")+'"><b>'+cnt("wait")+'</b><span>等到貨</span></button><button type="button" data-status="" aria-pressed="'+(!statusF)+'"><b>'+all.length+'</b><span>品項・'+money(value)+'</span></button></div>'+
     '<div class="btnrow" style="margin-top:0"><button class="btn pri" type="button" data-newitem="1">＋ 新增產品</button><button class="btn ghost" type="button" data-batch="1">依品牌盤點</button></div>'+
-    supChips(sups,supF,"supf",s=>st.filter(x=>(x.it.supplier||"未填廠商")===s&&x.s==="need").length)+
+    (all.length?supChips(sups,supF,"supf",s=>st.filter(x=>(x.it.supplier||"未填廠商")===s&&x.s==="need").length,"品牌")+
+    supChips(cats,catF,"catf",c=>st.filter(x=>catOf(x.it)===c&&x.s==="need").length,"分類"):"")+
     (all.length?'<div class="list" style="margin-top:8px">'+(rows.length?rows.map(x=>itemRow(x.it)).join(""):'<div class="empty">沒有符合的品項</div>')+'</div>':'<div class="empty" style="margin-top:12px">還沒有庫存<br>按「＋ 新增產品」把店裡現有的產品一個一個加進來<br>（選廠商、填品名、價格、現在數量）</div>');
 }
 
@@ -302,12 +306,13 @@ function renderDaily(){
   const todays=db.moves.filter(x=>x.type==="領用"&&dateStr(x.at)===today).sort((a,b)=>b.at-a.at);
   const usedVal=todays.reduce((a,x)=>a+(-num(x.qty))*num(itemById(x.itemId)?.price),0);
   const sups=[...new Set(db.items.map(i=>i.supplier||"未填廠商"))].sort(byZh);if(dailySup&&!sups.includes(dailySup))dailySup="";
-  let list=db.items.filter(it=>(!dailySup||(it.supplier||"未填廠商")===dailySup)&&(!m||m(itemHay(it))));
+  const cats=CATS.filter(c=>db.items.some(i=>catOf(i)===c));if(dailyCat&&!cats.includes(dailyCat))dailyCat="";
+  let list=db.items.filter(it=>(!dailySup||(it.supplier||"未填廠商")===dailySup)&&(!dailyCat||catOf(it)===dailyCat)&&(!m||m(itemHay(it))));
   list.sort((a,b)=>byZh(a.supplier,b.supplier)||byZh(a.name,b.name));
   const filled=Object.keys(dailyQty).filter(k=>dailyQty[k]>0);
   el.innerHTML='<div class="today"><b>'+dateTw(today)+'</b><button class="who" type="button" data-who="1">'+(me?'經手人：'+esc(me):'設定你的名字')+'</button></div>'+
     '<div class="hint">今天用掉的產品，填數量後按最下面「扣庫存」</div>'+
-    supChips(sups,dailySup,"dsup")+
+    (db.items.length?supChips(sups,dailySup,"dsup",null,"品牌")+supChips(cats,dailyCat,"dcat",null,"分類"):"")+
     (db.items.length?'<div class="card" style="margin-top:8px;padding-top:4px;padding-bottom:4px">'+(list.length?list.map(it=>{const v=dailyQty[it.id]||0;
       return '<div class="bline'+(v>0?' on':'')+'" data-row="'+esc(it.id)+'"><div class="min"><div class="nm" style="font-weight:500">'+esc(it.name)+'</div><div class="sub">庫存 '+num(it.count)+' '+esc(it.unit||"")+' · '+esc(it.supplier)+'</div></div>'+
       '<div class="mini"><button type="button" data-dq="'+esc(it.id)+'" data-d="-1" aria-label="減少">−</button><input data-dqi="'+esc(it.id)+'" type="number" inputmode="numeric" min="0" value="'+v+'"><button type="button" data-dq="'+esc(it.id)+'" data-d="1" aria-label="增加">＋</button></div></div>'}).join(""):'<div class="hint" style="padding:12px 0">沒有符合的品項</div>')+'</div>'+
@@ -607,6 +612,8 @@ document.addEventListener("click",e=>{
   if("supf" in d){supF=d.supf;renderStock();return}
   if("status" in d){statusF=statusF===d.status?"":d.status;renderStock();return}
   if("dsup" in d){dailySup=d.dsup;renderDaily();return}
+  if("dcat" in d){dailyCat=d.dcat;renderDaily();return}
+  if("catf" in d){catF=d.catf;renderStock();return}
   if(d.dq){const k=d.dq;dailyQty[k]=Math.max(0,(dailyQty[k]||0)+num(d.d));const inp=t.parentNode.querySelector("input");inp.value=dailyQty[k];t.closest(".bline").classList.toggle("on",dailyQty[k]>0);const n=Object.keys(dailyQty).filter(x=>dailyQty[x]>0).length;const b=document.querySelector("[data-usesave]");if(b)b.textContent=n?"扣庫存（"+n+" 項）":"扣庫存";return}
   if(d.usesave){saveDaily();return}
   if(d.who){whoSheet();return}
