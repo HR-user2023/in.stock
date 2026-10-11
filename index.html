@@ -198,9 +198,10 @@ const DEFAULT_SUPPLIERS=[["台灣歌薇",3000],["威娜",3000],["哥德式",3000
 let api=store.get("ss.api","");
 (function(){const p=new URLSearchParams(location.search);const a=p.get("api");if(a&&/^https:\/\/script\.google\.com\//.test(a)){api=a;store.set("ss.api",a);history.replaceState(null,"",location.pathname)}})();
 let me=store.get("ss.me","");
-const EMPTY={items:[],orders:[],moves:[],suppliers:[],shop:""};
+const EMPTY={items:[],orders:[],moves:[],suppliers:[],shop:"",stores:[]};
 let db=Object.assign({},EMPTY,store.get("ss.db2",{}));
 let queue=store.get("ss.queue2",[]);
+let curStore=store.get("ss.store",""),orderStoreF="";
 let tab="stock",supF="",catF="",dailyCat="",statusF="",orderAll=false,sheetOpen=false,syncing=false,lastErr="",dailyQty={},dailySup="";
 const save=()=>store.set("ss.db2",db);
 const findIn=(k,id)=>db[k].find(x=>String(x[k==="suppliers"?"name":"id"])===String(id));
@@ -212,6 +213,7 @@ function apply(o){
   if(o.type==="delete")db[k]=db[k].filter(x=>String(x[key])!==String(d[key]));
   if(o.type==="adjust"){const it=itemById(d.id);if(it){it.count=Math.max(0,num(it.count)+num(d.delta));it.updatedAt=d.at;if(d.move){d.move.after=it.count;db.moves.push(Object.assign({},d.move))}}}
   if(o.type==="shop")db.shop=d.shop;
+  if(o.type==="stores")db.stores=d.stores.slice();
 }
 function op(type,table,data){
   const o={type,table,data:JSON.parse(JSON.stringify(data))};apply(o);save();
@@ -236,7 +238,7 @@ async function sync(){
     queue=queue.slice(sending.length);store.set("ss.queue2",queue);
     if(!queue.length){
       const x=j.data;
-      db={items:(x.items||[]).map(fixItem),orders:(x.orders||[]).map(fixOrder),moves:(x.moves||[]).map(fixMove),suppliers:(x.suppliers||[]).map(s=>({name:String(s.name),min:num(s.min),contact:s.contact||"",note:s.note||""})),shop:x.shop||""};
+      db={items:(x.items||[]).map(fixItem),orders:(x.orders||[]).map(fixOrder),moves:(x.moves||[]).map(fixMove),suppliers:(x.suppliers||[]).map(s=>({name:String(s.name),min:num(s.min),contact:s.contact||"",note:s.note||""})),shop:x.shop||"",stores:(x.stores||[]).map(String)};
       save();const typing=document.activeElement&&document.activeElement.tagName==="INPUT";if(!sheetOpen&&!typing)render();else renderSync();
     }
     lastErr="";
@@ -267,7 +269,7 @@ function flags(o){const f=[];if(o.arrivedAt){const d=num(o.recvQty)-num(o.qty);i
 const amtOf=o=>o.arrivedAt?num(o.recvQty)*num(o.recvPrice):num(o.qty)*num(o.price);
 function orderGroups(){
   const g=new Map();
-  db.orders.forEach(o=>{const k=o.orderNo||o.id;if(!g.has(k))g.set(k,{no:k,supplier:o.supplier,date:o.orderDate||dateStr(o.createdAt),created:num(o.createdAt),lines:[]});g.get(k).lines.push(o)});
+  db.orders.forEach(o=>{const k=o.orderNo||o.id;if(!g.has(k))g.set(k,{no:k,supplier:o.supplier,store:o.store||"",date:o.orderDate||dateStr(o.createdAt),created:num(o.createdAt),lines:[]});g.get(k).lines.push(o)});
   return [...g.values()].map(x=>{x.total=x.lines.reduce((a,o)=>a+num(o.qty)*num(o.price),0);x.actual=x.lines.reduce((a,o)=>a+amtOf(o),0);const n=x.lines.filter(o=>o.arrivedAt).length;x.state=n===0?"pend":n===x.lines.length?"done":"part";x.bad=x.lines.filter(o=>flags(o).length).length;return x}).sort((a,b)=>(b.date>a.date?1:b.date<a.date?-1:b.created-a.created));
 }
 const catOf=it=>CATS.includes(it.category)?it.category:"其他";
@@ -331,13 +333,14 @@ function saveDaily(){
 function renderOrder(){
   const el=$("#view-order"),m=matcher($("#q").value);
   const now=new Date(),ym=now.getFullYear()+"-"+pad(now.getMonth()+1);
-  const gs=orderGroups();
+  const stores=db.stores||[];if(orderStoreF&&!stores.includes(orderStoreF))orderStoreF="";
+  const gs=orderGroups().filter(g=>!orderStoreF||g.store===orderStoreF);
   const month=gs.filter(g=>g.date.slice(0,7)===ym);
   const monthTotal=month.reduce((a,g)=>a+(g.state==="done"?g.actual:g.total),0);
   const pend=gs.filter(g=>g.state!=="done"),pendTotal=pend.reduce((a,g)=>a+g.lines.filter(o=>!o.arrivedAt).reduce((s,o)=>s+num(o.qty)*num(o.price),0),0);
   const bySup={};month.forEach(g=>bySup[g.supplier]=(bySup[g.supplier]||0)+(g.state==="done"?g.actual:g.total));
   let list=orderAll?gs:pend;if(m)list=list.filter(g=>m(norm(g.supplier+" "+g.no+" "+g.lines.map(o=>o.name).join(" "))));
-  el.innerHTML='<div class="statgrid"><div class="stat hl"><b>'+money(monthTotal)+'</b><span>'+(now.getMonth()+1)+' 月叫貨總額（'+month.length+' 張）</span></div><div class="stat"><b style="color:var(--wait)">'+money(pendTotal)+'</b><span>還沒到貨（'+pend.length+' 張）</span></div></div>'+
+  el.innerHTML=supChips(stores,orderStoreF,"ostf",null,stores.length>1?"店點":"")+'<div class="statgrid"><div class="stat hl"><b>'+money(monthTotal)+'</b><span>'+(now.getMonth()+1)+' 月叫貨總額（'+month.length+' 張）</span></div><div class="stat"><b style="color:var(--wait)">'+money(pendTotal)+'</b><span>還沒到貨（'+pend.length+' 張）</span></div></div>'+
     (Object.keys(bySup).length?'<div class="card" style="padding:6px 14px">'+Object.entries(bySup).sort((a,b)=>b[1]-a[1]).map(([s,v])=>'<div class="line" style="border-top:0;padding:5px 0"><span>'+esc(s)+'</span><span class="money">'+money(v)+'</span></div>').join("")+'</div>':'')+
     '<button class="btn pri wide" type="button" data-neworder="1" style="margin-top:10px">＋ 建立叫貨清單</button>'+
     '<div class="chips" style="margin-top:6px"><button class="chip" type="button" data-oall="0" aria-pressed="'+(!orderAll)+'">還沒到貨</button><button class="chip" type="button" data-oall="1" aria-pressed="'+orderAll+'">全部訂單</button></div>'+
@@ -346,7 +349,7 @@ function renderOrder(){
 function orderCard(g){
   const st={pend:'<span class="pill wait">還沒到</span>',part:'<span class="pill amb">部分到貨</span>',done:'<span class="pill ok">已入庫</span>'}[g.state];
   const min=minOf(g.supplier);
-  return '<div class="card" style="margin-top:8px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div class="min"><h3>'+esc(g.supplier)+'</h3><div class="sub">叫貨日期 '+dateTw(g.date)+' · '+g.lines.length+' 項</div>'+st+(g.bad?' <span class="pill need">異常 '+g.bad+'</span>':'')+(g.state!=="done"&&g.total<min?' <span class="pill amb">未滿 '+money(min)+'</span>':'')+'</div><div class="money" style="font-size:19px;text-align:right">'+money(g.state==="done"?g.actual:g.total)+'</div></div>'+
+  return '<div class="card" style="margin-top:8px"><div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start"><div class="min"><h3>'+esc(g.supplier)+'</h3><div class="sub">'+(g.store?esc(g.store)+' · ':'')+'叫貨日期 '+dateTw(g.date)+' · '+g.lines.length+' 項</div>'+st+(g.bad?' <span class="pill need">異常 '+g.bad+'</span>':'')+(g.state!=="done"&&g.total<min?' <span class="pill amb">未滿 '+money(min)+'</span>':'')+'</div><div class="money" style="font-size:19px;text-align:right">'+money(g.state==="done"?g.actual:g.total)+'</div></div>'+
     '<div class="sub" style="margin-top:6px">'+g.lines.slice(0,4).map(o=>esc(o.name)+' ×'+num(o.qty)).join("、")+(g.lines.length>4?'…':'')+'</div>'+
     '<div class="btnrow"><button class="btn ghost" type="button" data-order="'+esc(g.no)+'">清單／複製</button>'+(g.state!=="done"?'<button class="btn ok" type="button" data-receive="'+esc(g.no)+'">到貨入庫</button>':'')+'</div></div>';
 }
@@ -357,7 +360,7 @@ function renderMore(){
     '<button type="button" data-log="1"><div><div class="t">庫存異動紀錄</div><div class="d">每一筆入庫、點貨、到貨、盤點的時間和經手人</div></div><span>›</span></button>'+
     '<button type="button" data-suppliers="1"><div><div class="t">廠商與產品</div><div class="d">新增廠商、產品，修改價格與最低出貨金額</div></div><span>›</span></button>'+
     '<button type="button" data-stats="1"><div><div class="t">費用統整</div><div class="d">每月、每家廠商叫貨金額，價格數量異常</div></div><span>›</span></button>'+
-    '<button type="button" data-settings="1"><div><div class="t">設定</div><div class="d">連線 Google 試算表、店名、經手人、員工連結</div></div><span>›</span></button>'+
+    '<button type="button" data-settings="1"><div><div class="t">設定</div><div class="d">連線 Google 試算表、店名、分店、經手人、員工連結</div></div><span>›</span></button>'+
   '</div>';
 }
 function render(){
@@ -455,8 +458,10 @@ function orderForm(sup,preset){
   const qty=Object.assign({},preset||{});
   if(!preset)db.items.filter(i=>i.supplier===sup&&status(i)==="need").forEach(i=>qty[i.id]=suggest(i));
   const min=minOf(sup);let armed=false,extra=[];
+  if(!(db.stores||[]).includes(curStore))curStore=(db.stores||[])[0]||"";
   openSheet('<h2>建立叫貨清單</h2>'+
     '<div class="chips">'+sups.map(s=>'<button class="chip" type="button" data-os="'+esc(s)+'" aria-pressed="'+(s===sup)+'">'+esc(s)+'</button>').join("")+'</div>'+
+    '<div id="ostore"></div>'+
     '<div class="sec" style="margin-top:6px"><label class="hint" style="display:flex;justify-content:space-between;align-items:center;gap:10px">叫貨日期<input id="odate" type="date" value="'+dateStr(Date.now())+'" style="padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);font-size:16px"></label></div>'+
     '<input id="osearch" type="search" placeholder="找 '+esc(sup)+' 的其他產品加入" style="'+inputCss+';margin-top:10px">'+
     '<div id="osr"></div><div class="label"><span>'+esc(sup)+' 的庫存品項</span><span class="sub">缺貨的已帶入建議量</span></div><div id="olist"></div>'+
@@ -468,30 +473,38 @@ function orderForm(sup,preset){
   $("#osearch").oninput=()=>{const m=matcher($("#osearch").value);if(!m){$("#osr").innerHTML="";return}
     const mine=db.items.filter(i=>i.supplier===sup&&m(itemHay(i))).slice(0,10);
     $("#osr").innerHTML=mine.length?'<div class="card" style="margin-top:6px;padding:4px 12px">'+mine.map(i=>'<div class="line"><span>'+esc(i.name)+'</span><button class="btn sm ok" type="button" data-oadd="'+esc(i.id)+'">加入</button></div>').join("")+'</div>':'<div class="hint" style="padding:8px 2px">找不到，可以先到「庫存 → ＋ 新增產品」加進來</div>'};
+  const drawStore=adding=>{const ss=db.stores||[];
+    $("#ostore").innerHTML='<div class="chips"><span class="chiplab">店點</span>'+ss.map(s=>'<button class="chip" type="button" data-ost="'+esc(s)+'" aria-pressed="'+(s===curStore)+'">'+esc(s)+'</button>').join("")+'<button class="chip" type="button" data-ostadd="1">＋ 新增分店</button></div>'+
+      (adding||!ss.length?'<div class="btnrow" style="margin-top:4px"><input id="ostnew" placeholder="分店名稱，例：中山店" style="'+inputCss+';flex:2"><button class="btn" type="button" data-ostsave="1">加入</button></div>':'')};
+  drawStore(false);
   const sh=$("#sheet");
   sh.oninput=e=>{const k=e.target.dataset&&e.target.dataset.oqi;if(k){qty[k]=Math.max(0,num(e.target.value));e.target.closest(".bline").classList.toggle("on",qty[k]>0);sum()}};
   sh.onclick=e=>{const b=e.target.closest("button");if(!b)return;
     if(b.dataset.os){orderForm(b.dataset.os);return}
+    if(b.dataset.ost){curStore=b.dataset.ost;store.set("ss.store",curStore);drawStore(false);return}
+    if(b.dataset.ostadd){drawStore(true);$("#ostnew").focus();return}
+    if(b.dataset.ostsave){const n=$("#ostnew").value.trim();if(!n)return;const ss=(db.stores||[]).filter(x=>x!==n).concat(n);op("stores","settings",{stores:ss});curStore=n;store.set("ss.store",n);drawStore(false);toast("已新增分店："+n);return}
     if(b.dataset.oq){const k=b.dataset.oq,inp=b.parentNode.querySelector("input");qty[k]=Math.max(0,num(inp.value)+num(b.dataset.d));inp.value=qty[k];b.closest(".bline").classList.toggle("on",qty[k]>0);sum();return}
     if(b.dataset.oadd){const id=b.dataset.oadd;extra.push(id);qty[id]=Math.max(1,qty[id]||0);$("#osearch").value="";$("#osr").innerHTML="";draw();return}};
   draw();
   $("#ogo").onclick=()=>{
     const sel=Object.keys(qty).filter(id=>qty[id]>0&&itemById(id));if(!sel.length){toast("還沒有填數量");return}
+    if((db.stores||[]).length&&!curStore){toast("請選擇店點");return}
     const t=sel.reduce((a,id)=>a+qty[id]*num(itemById(id).price),0);if(min&&t<min&&!armed){armed=true;$("#ogo").textContent="未滿 "+money(min)+"，再按一次仍要產生";return}
     const date=$("#odate").value||dateStr(Date.now()),now=Date.now(),dd=new Date(now);
     const no=date.replace(/-/g,"")+"-"+pad(dd.getHours())+pad(dd.getMinutes())+pad(dd.getSeconds());
-    sel.forEach(id=>{const it=itemById(id);op("upsert","orders",{id:uid(),orderNo:no,orderDate:date,createdAt:now,supplier:sup,itemId:it.id,name:it.name,qty:qty[id],price:num(it.price),arrivedAt:0,recvQty:"",recvPrice:"",check:"",by:me})});
+    sel.forEach(id=>{const it=itemById(id);op("upsert","orders",{id:uid(),orderNo:no,orderDate:date,createdAt:now,supplier:sup,itemId:it.id,name:it.name,qty:qty[id],price:num(it.price),arrivedAt:0,recvQty:"",recvPrice:"",check:"",by:me,store:curStore})});
     toast("已建立叫貨清單");tab="order";orderSheet(no)};
 }
 function minBar(t,min){if(!min)return"";const ok=t>=min;return '<div class="bar"><i style="width:'+Math.min(100,t/min*100)+'%;background:'+(ok?'var(--ok)':'var(--need)')+'"></i></div><div class="'+(ok?'good':'warn')+'" style="margin-top:4px">'+(ok?'已達最低出貨金額 '+money(min):'還差 '+money(min-t)+' 才會出貨（最低 '+money(min)+'）')+'</div>'}
 function orderText(g){
-  const L=["【叫貨清單】"+(db.shop||""),"叫貨日期："+dateTw(g.date),"廠商："+g.supplier,"──────────"];
-  g.lines.forEach((o,i)=>{const it=itemById(o.itemId);L.push((i+1)+". "+(dc(it?.code)?it.code+" ":"")+o.name+" × "+num(o.qty)+(it?.unit||"")+"（單價 "+money(num(o.price))+"）")});
-  L.push("──────────","共 "+g.lines.length+" 項，合計 "+money(g.total),"麻煩安排出貨，謝謝！");return L.join("\n")}
+  const L=["【叫貨清單】"+(db.shop||""),"叫貨日期："+dateTw(g.date),"廠商："+g.supplier].concat(g.store?["店點："+g.store]:[],["──────────"]);
+  g.lines.forEach((o,i)=>{const it=itemById(o.itemId);L.push((i+1)+". "+(dc(it?.code)?it.code+" ":"")+o.name+" × "+num(o.qty)+(it?.unit||""))});
+  L.push("──────────","共 "+g.lines.length+" 項","麻煩安排出貨，謝謝！");return L.join("\n")}
 function orderSheet(no){
   const g=orderGroups().find(x=>x.no===no);if(!g){closeSheet();return}
   const txt=orderText(g);
-  openSheet('<h2>叫貨清單</h2><div class="hint">'+esc(g.supplier)+' · 叫貨日期 '+dateTw(g.date)+'</div>'+
+  openSheet('<h2>叫貨清單</h2><div class="hint">'+(g.store?esc(g.store)+' · ':'')+esc(g.supplier)+' · 叫貨日期 '+dateTw(g.date)+'</div>'+
     '<div class="sec">'+g.lines.map(o=>'<div class="line" style="border-top:0;padding:4px 0"><span>'+esc(o.name)+' × '+num(o.qty)+'</span><span class="money">'+money(num(o.qty)*num(o.price))+'</span></div>').join("")+
     '<div class="total" style="border-top:1px solid var(--line);padding-top:8px"><span>合計 '+g.lines.length+' 項</span><span class="money" style="font-size:22px">'+money(g.total)+'</span></div>'+minBar(g.total,minOf(g.supplier))+'</div>'+
     '<div class="sec"><h4>複製貼到 LINE</h4>'+(db.shop?'':'<div class="form"><label>店名（只要填一次，會出現在清單上）<input id="shopName" placeholder="例：小美髮廊"></label><button class="btn sm ghost" type="button" id="saveShop">儲存店名</button></div>')+
@@ -582,12 +595,16 @@ function settingsSheet(){
   openSheet('<h2>設定</h2>'+
     '<div class="sec"><h4>經手人（這支手機）</h4><div class="hint">點貨、入庫時會記錄是誰做的</div><div class="btnrow" style="margin-top:0"><input id="me" value="'+esc(me)+'" placeholder="例：小美" style="'+inputCss+';flex:2"><button class="btn" type="button" id="saveMe">儲存</button></div></div>'+
     '<div class="sec"><h4>店名（顯示在叫貨清單）</h4><div class="btnrow" style="margin-top:0"><input id="shop" value="'+esc(db.shop||"")+'" style="'+inputCss+';flex:2"><button class="btn" type="button" id="saveShop2">儲存</button></div></div>'+
+    '<div class="sec"><h4>分店（叫貨時選擇店點）</h4><div id="stl"></div><div class="btnrow" style="margin-top:6px"><input id="stnew" placeholder="例：中山店" style="'+inputCss+';flex:2"><button class="btn" type="button" id="addSt">新增</button></div></div>'+
     '<div class="sec"><h4>Google 試算表連線網址</h4><div class="hint">Apps Script 部署後拿到的「網頁應用程式」網址（/exec 結尾）</div>'+
     '<input id="apiUrl" value="'+esc(api)+'" placeholder="https://script.google.com/macros/s/…/exec" style="'+inputCss+';font-size:14px">'+
     '<div class="btnrow" style="margin-top:0"><button class="btn pri" type="button" id="saveApi">連線</button>'+(api?'<button class="btn ghost" type="button" id="syncNow">立即同步</button>':'')+'</div>'+
     '<div class="hint" id="apiMsg">'+(lastErr?'<span class="warn">上次同步失敗：'+esc(lastErr)+'</span>':'')+'</div></div>'+
     (share?'<div class="sec"><h4>給員工的連結</h4><div class="hint">員工手機打開一次，就會連上同一份資料</div><textarea id="shareTxt" readonly rows="3" style="width:100%;font-size:12px;padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink)">'+esc(share)+'</textarea><button class="btn wide" type="button" id="copyShare">複製員工連結</button></div>':''));
   $("#saveMe").onclick=()=>{me=$("#me").value.trim();store.set("ss.me",me);toast("已儲存")};
+  const drawSt=()=>{const ss=db.stores||[];$("#stl").innerHTML=ss.length?ss.map(s=>'<div class="line"><span>'+esc(s)+'</span><button class="btn sm ghost" type="button" data-stdel="'+esc(s)+'">刪除</button></div>').join(""):'<div class="hint">還沒有分店</div>'};drawSt();
+  $("#addSt").onclick=()=>{const n=$("#stnew").value.trim();if(!n)return;op("stores","settings",{stores:(db.stores||[]).filter(x=>x!==n).concat(n)});$("#stnew").value="";drawSt();toast("已新增")};
+  $("#stl").onclick=e=>{const b=e.target.closest("[data-stdel]");if(!b)return;op("stores","settings",{stores:(db.stores||[]).filter(x=>x!==b.dataset.stdel)});drawSt();toast("已刪除")};
   $("#saveShop2").onclick=()=>{op("shop","settings",{shop:$("#shop").value.trim()});toast("已儲存")};
   $("#saveApi").onclick=async()=>{const v=$("#apiUrl").value.trim();if(v&&!/^https:\/\/script\.google\.com\/.+\/exec/.test(v)){$("#apiMsg").innerHTML='<span class="warn">網址要是 https://script.google.com/ 開頭、/exec 結尾</span>';return}
     const hadLocal=!api&&(db.items.length||db.orders.length);api=v;store.set("ss.api",v);
@@ -614,6 +631,7 @@ document.addEventListener("click",e=>{
   if("dsup" in d){dailySup=d.dsup;renderDaily();return}
   if("dcat" in d){dailyCat=d.dcat;renderDaily();return}
   if("catf" in d){catF=d.catf;renderStock();return}
+  if("ostf" in d){orderStoreF=d.ostf;renderOrder();return}
   if(d.dq){const k=d.dq;dailyQty[k]=Math.max(0,(dailyQty[k]||0)+num(d.d));const inp=t.parentNode.querySelector("input");inp.value=dailyQty[k];t.closest(".bline").classList.toggle("on",dailyQty[k]>0);const n=Object.keys(dailyQty).filter(x=>dailyQty[x]>0).length;const b=document.querySelector("[data-usesave]");if(b)b.textContent=n?"扣庫存（"+n+" 項）":"扣庫存";return}
   if(d.usesave){saveDaily();return}
   if(d.who){whoSheet();return}
