@@ -105,7 +105,7 @@ function setup_() {
     Object.keys(T).forEach(k => {
       const t = T[k]; if (ss.getSheetByName(t.sheet)) return;
       const sh = ss.insertSheet(t.sheet);
-      sh.getRange(1, 1, 1, t.head.length).setValues([t.head]).setFontWeight('bold').setBackground('#6B2D52').setFontColor('#FFFFFF');
+      sh.getRange(1, 1, 1, t.head.length).setValues([t.head]).setFontWeight('bold').setBackground('#0F9488').setFontColor('#FFFFFF');
       sh.setFrozenRows(1);
       t.widths.forEach((w, i) => sh.setColumnWidth(i + 1, w));
       sh.getRange('A:B').setNumberFormat('@');
