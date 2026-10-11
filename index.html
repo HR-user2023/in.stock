@@ -477,7 +477,7 @@ function orderForm(sup,preset){
   draw();
   $("#ogo").onclick=()=>{
     const sel=Object.keys(qty).filter(id=>qty[id]>0&&itemById(id));if(!sel.length){toast("還沒有填數量");return}
-    const t=sum();if(min&&t<min&&!armed){armed=true;$("#ogo").textContent="未滿 "+money(min)+"，再按一次仍要產生";return}
+    const t=sel.reduce((a,id)=>a+qty[id]*num(itemById(id).price),0);if(min&&t<min&&!armed){armed=true;$("#ogo").textContent="未滿 "+money(min)+"，再按一次仍要產生";return}
     const date=$("#odate").value||dateStr(Date.now()),now=Date.now(),dd=new Date(now);
     const no=date.replace(/-/g,"")+"-"+pad(dd.getHours())+pad(dd.getMinutes())+pad(dd.getSeconds());
     sel.forEach(id=>{const it=itemById(id);op("upsert","orders",{id:uid(),orderNo:no,orderDate:date,createdAt:now,supplier:sup,itemId:it.id,name:it.name,qty:qty[id],price:num(it.price),arrivedAt:0,recvQty:"",recvPrice:"",check:"",by:me})});
