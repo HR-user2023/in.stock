@@ -184,6 +184,7 @@ const md=t=>{const d=new Date(t);return (d.getMonth()+1)+"/"+d.getDate()};
 const mdhm=t=>md(t)+" "+hm(t);
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const dc=x=>x&&String(x)[0]!=="_"?String(x):"";
+const FLOORS=["樓上","樓下"];
 const CATS=["染膏","燙髮藥水","護髮","店販","耗材","其他"];
 const DEFAULT_MIN=3000;
 const store={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
@@ -201,7 +202,7 @@ let me=store.get("ss.me","");
 const EMPTY={items:[],orders:[],moves:[],suppliers:[],shop:"",stores:[]};
 let db=Object.assign({},EMPTY,store.get("ss.db2",{}));
 let queue=store.get("ss.queue2",[]);
-let curStore=store.get("ss.store",""),orderStoreF="";
+let floorF=store.get("ss.floor",""),curStore=store.get("ss.store",""),orderStoreF="";
 let tab="stock",supF="",catF="",dailyCat="",statusF="",orderAll=false,sheetOpen=false,syncing=false,lastErr="",dailyQty={},dailySup="";
 const save=()=>store.set("ss.db2",db);
 const findIn=(k,id)=>db[k].find(x=>String(x[k==="suppliers"?"name":"id"])===String(id));
@@ -246,7 +247,7 @@ async function sync(){
   syncing=false;renderSync();
   if(queue.length)scheduleSync(lastErr?15000:300);
 }
-function fixItem(i){return Object.assign({},i,{id:String(i.id),code:String(i.code||""),supplier:String(i.supplier||""),name:String(i.name||""),price:num(i.price),safety:num(i.safety),count:num(i.count),updatedAt:num(i.updatedAt)})}
+function fixItem(i){return Object.assign({},i,{id:String(i.id),code:String(i.code||""),supplier:String(i.supplier||""),name:String(i.name||""),price:num(i.price),safety:num(i.safety),count:num(i.count),updatedAt:num(i.updatedAt),floor:FLOORS.includes(String(i.floor||""))?String(i.floor):""})}
 function fixOrder(o){return Object.assign({},o,{id:String(o.id),orderNo:String(o.orderNo||""),orderDate:String(o.orderDate||""),itemId:String(o.itemId),supplier:String(o.supplier||""),qty:num(o.qty),price:num(o.price),createdAt:num(o.createdAt),arrivedAt:num(o.arrivedAt),recvQty:num(o.recvQty),recvPrice:num(o.recvPrice)})}
 function fixMove(m){return Object.assign({},m,{id:String(m.id),at:num(m.at),qty:num(m.qty),after:num(m.after),itemId:String(m.itemId)})}
 function renderSync(){
@@ -272,12 +273,14 @@ function orderGroups(){
   db.orders.forEach(o=>{const k=o.orderNo||o.id;if(!g.has(k))g.set(k,{no:k,supplier:o.supplier,store:o.store||"",date:o.orderDate||dateStr(o.createdAt),created:num(o.createdAt),lines:[]});g.get(k).lines.push(o)});
   return [...g.values()].map(x=>{x.total=x.lines.reduce((a,o)=>a+num(o.qty)*num(o.price),0);x.actual=x.lines.reduce((a,o)=>a+amtOf(o),0);const n=x.lines.filter(o=>o.arrivedAt).length;x.state=n===0?"pend":n===x.lines.length?"done":"part";x.bad=x.lines.filter(o=>flags(o).length).length;return x}).sort((a,b)=>(b.date>a.date?1:b.date<a.date?-1:b.created-a.created));
 }
+const onFloor=it=>!floorF||!it.floor||it.floor===floorF;
+const floorChips=()=>db.items.some(i=>i.floor)?supChips(FLOORS,floorF,"flr",null,"樓層"):"";
 const catOf=it=>CATS.includes(it.category)?it.category:"其他";
 const itemHay=it=>norm(it.name+" "+dc(it.code)+" "+it.supplier+" "+(it.category||""));
 
 /* ========== 庫存頁 ========== */
 function itemRow(it){const st=status(it),p=pendingOf(it);
-  return '<button class="row '+st+'" type="button" data-item="'+esc(it.id)+'"><div class="min"><div class="nm">'+esc(it.name)+'</div><div class="sub">'+esc([it.supplier,catOf(it),dc(it.code)].filter(Boolean).join(" · "))+'</div>'+pill[st]+'</div>'+
+  return '<button class="row '+st+'" type="button" data-item="'+esc(it.id)+'"><div class="min"><div class="nm">'+esc(it.name)+'</div><div class="sub">'+esc([it.supplier,catOf(it),it.floor||"",dc(it.code)].filter(Boolean).join(" · "))+'</div>'+pill[st]+'</div>'+
   '<div class="qty"><b>'+num(it.count)+'</b> <span class="sub">'+esc(it.unit||"")+'</span><small>安全 '+num(it.safety)+(p?' · 在途 '+p:'')+'</small></div></button>'}
 function supChips(list,cur,attr,needCount,lab){return list.length>(lab?0:1)?'<div class="chips">'+(lab?'<span class="chiplab">'+lab+'</span>':'')+['',...list].map(s=>{const n=s&&needCount?needCount(s):0;return '<button class="chip" type="button" data-'+attr+'="'+esc(s)+'" aria-pressed="'+(s===cur)+'">'+(s?esc(s):"全部")+(n?'<b>'+n+'</b>':'')+'</button>'}).join("")+'</div>':''}
 function renderStock(){
@@ -289,14 +292,14 @@ function renderStock(){
     return;
   }
   const sups=[...new Set(all.map(i=>i.supplier||"未填廠商"))].sort(byZh);if(supF&&!sups.includes(supF))supF="";
-  const st=all.map(it=>({it,s:status(it)}));const cnt=s=>st.filter(x=>x.s===s).length;
+  const st=all.filter(onFloor).map(it=>({it,s:status(it)}));const cnt=s=>st.filter(x=>x.s===s).length;
   const value=all.reduce((a,it)=>a+num(it.count)*num(it.price),0);
   const cats=CATS.filter(c=>all.some(i=>catOf(i)===c));if(catF&&!cats.includes(catF))catF="";
   let rows=st.filter(x=>(!supF||(x.it.supplier||"未填廠商")===supF)&&(!catF||catOf(x.it)===catF)&&(!statusF||x.s===statusF));
   const rank={need:0,wait:1,ok:2};rows.sort((a,b)=>rank[a.s]-rank[b.s]||byZh(a.it.supplier,b.it.supplier)||byZh(a.it.name,b.it.name));
   el.innerHTML='<div class="sum"><button class="need" type="button" data-status="need" aria-pressed="'+(statusF==="need")+'"><b>'+cnt("need")+'</b><span>要補貨</span></button><button class="wait" type="button" data-status="wait" aria-pressed="'+(statusF==="wait")+'"><b>'+cnt("wait")+'</b><span>等到貨</span></button><button type="button" data-status="" aria-pressed="'+(!statusF)+'"><b>'+all.length+'</b><span>品項・'+money(value)+'</span></button></div>'+
     '<div class="btnrow" style="margin-top:0"><button class="btn pri" type="button" data-newitem="1">＋ 新增產品</button><button class="btn ghost" type="button" data-batch="1">依品牌盤點</button></div>'+
-    (all.length?supChips(sups,supF,"supf",s=>st.filter(x=>(x.it.supplier||"未填廠商")===s&&x.s==="need").length,"品牌")+
+    (all.length?floorChips()+supChips(sups,supF,"supf",s=>st.filter(x=>(x.it.supplier||"未填廠商")===s&&x.s==="need").length,"品牌")+
     supChips(cats,catF,"catf",c=>st.filter(x=>catOf(x.it)===c&&x.s==="need").length,"分類"):"")+
     (all.length?'<div class="list" style="margin-top:8px">'+(rows.length?rows.map(x=>itemRow(x.it)).join(""):'<div class="empty">沒有符合的品項</div>')+'</div>':'<div class="empty" style="margin-top:12px">還沒有庫存<br>按「＋ 新增產品」把店裡現有的產品一個一個加進來<br>（選廠商、填品名、價格、現在數量）</div>');
 }
@@ -309,12 +312,12 @@ function renderDaily(){
   const usedVal=todays.reduce((a,x)=>a+(-num(x.qty))*num(itemById(x.itemId)?.price),0);
   const sups=[...new Set(db.items.map(i=>i.supplier||"未填廠商"))].sort(byZh);if(dailySup&&!sups.includes(dailySup))dailySup="";
   const cats=CATS.filter(c=>db.items.some(i=>catOf(i)===c));if(dailyCat&&!cats.includes(dailyCat))dailyCat="";
-  let list=db.items.filter(it=>(!dailySup||(it.supplier||"未填廠商")===dailySup)&&(!dailyCat||catOf(it)===dailyCat)&&(!m||m(itemHay(it))));
+  let list=db.items.filter(it=>(!dailySup||(it.supplier||"未填廠商")===dailySup)&&(!dailyCat||catOf(it)===dailyCat)&&onFloor(it)&&(!m||m(itemHay(it))));
   list.sort((a,b)=>byZh(a.supplier,b.supplier)||byZh(a.name,b.name));
   const filled=Object.keys(dailyQty).filter(k=>dailyQty[k]>0);
   el.innerHTML='<div class="today"><b>'+dateTw(today)+'</b><button class="who" type="button" data-who="1">'+(me?'經手人：'+esc(me):'設定你的名字')+'</button></div>'+
     '<div class="hint">今天用掉的產品，填數量後按最下面「扣庫存」</div>'+
-    (db.items.length?supChips(sups,dailySup,"dsup",null,"品牌")+supChips(cats,dailyCat,"dcat",null,"分類"):"")+
+    (db.items.length?floorChips()+supChips(sups,dailySup,"dsup",null,"品牌")+supChips(cats,dailyCat,"dcat",null,"分類"):"")+
     (db.items.length?'<div class="card" style="margin-top:8px;padding-top:4px;padding-bottom:4px">'+(list.length?list.map(it=>{const v=dailyQty[it.id]||0;
       return '<div class="bline'+(v>0?' on':'')+'" data-row="'+esc(it.id)+'"><div class="min"><div class="nm" style="font-weight:500">'+esc(it.name)+'</div><div class="sub">庫存 '+num(it.count)+' '+esc(it.unit||"")+' · '+esc(it.supplier)+'</div></div>'+
       '<div class="mini"><button type="button" data-dq="'+esc(it.id)+'" data-d="-1" aria-label="減少">−</button><input data-dqi="'+esc(it.id)+'" type="number" inputmode="numeric" min="0" value="'+v+'"><button type="button" data-dq="'+esc(it.id)+'" data-d="1" aria-label="增加">＋</button></div></div>'}).join(""):'<div class="hint" style="padding:12px 0">沒有符合的品項</div>')+'</div>'+
@@ -408,16 +411,17 @@ function itemSheet(id){
 }
 /* 新增／編輯產品 */
 function productForm(it,presetSup){
-  const e=it||{name:presetSup?"":$("#q").value.trim(),supplier:presetSup||supF||"",category:"染膏",unit:"",price:"",safety:2};
+  const e=it||{name:presetSup?"":$("#q").value.trim(),supplier:presetSup||supF||"",category:"染膏",unit:"",price:"",safety:2,floor:floorF};
   openSheet('<h2>'+(it?"編輯產品":"新增產品")+'</h2><form class="form" id="f" style="margin-top:10px">'+
     '<label>品名 *<input id="f_name" required value="'+esc(e.name)+'"></label>'+
     '<label>廠商 *<input id="f_sup" list="suplist" value="'+esc(e.supplier)+'" placeholder="選擇或輸入新廠商"><datalist id="suplist">'+suppliersAll().map(s=>'<option value="'+esc(s)+'">').join("")+'</datalist></label>'+
     '<div class="two"><label>單價 *<input id="f_price" type="number" inputmode="numeric" value="'+esc(e.price)+'"></label><label>單位<input id="f_unit" value="'+esc(e.unit)+'" placeholder="瓶、條、盒"></label></div>'+
     '<div class="two"><label>分類<select id="f_cat">'+CATS.map(c=>'<option'+(c===e.category?" selected":"")+'>'+c+'</option>').join("")+'</select></label><label>安全庫存<input id="f_safe" type="number" inputmode="numeric" value="'+esc(e.safety)+'"></label></div>'+
+    '<label>放在哪一層<select id="f_floor">'+[["","兩層都有"]].concat(FLOORS.map(f=>[f,f])).map(([v,t])=>'<option value="'+v+'"'+((e.floor||"")===v?" selected":"")+'>'+t+'</option>').join("")+'</select></label>'+
     (it?'':'<label>現在手邊數量<input id="f_cnt" type="number" inputmode="numeric" value="0"></label>')+
     '<button class="btn pri wide" type="submit">'+(it?"儲存":"加入")+'</button>'+(it?'':'<button class="btn ghost wide" type="button" id="f_next">加入並繼續新增同廠商</button>')+'</form>');
   $("#f").onsubmit=ev=>{ev.preventDefault();
-    const d={name:$("#f_name").value.trim(),supplier:$("#f_sup").value.trim(),price:num($("#f_price").value),unit:$("#f_unit").value.trim(),category:$("#f_cat").value,safety:Math.max(0,num($("#f_safe").value))};
+    const d={name:$("#f_name").value.trim(),supplier:$("#f_sup").value.trim(),price:num($("#f_price").value),unit:$("#f_unit").value.trim(),category:$("#f_cat").value,safety:Math.max(0,num($("#f_safe").value)),floor:$("#f_floor").value};
     if(!d.name||!d.supplier){toast("請填品名和廠商");return}
     if(!db.suppliers.some(s=>s.name===d.supplier))op("upsert","suppliers",{name:d.supplier,min:DEFAULT_MIN,contact:"",note:""});
     if(it){op("upsert","items",Object.assign({id:it.id},d));toast("已儲存");closeSheet();return}
@@ -428,17 +432,17 @@ function productForm(it,presetSup){
 }
 /* 依品牌盤點：一次改很多產品的數量 */
 function batchSheet(){
-  const sups=suppliersAll().filter(s=>db.items.some(i=>i.supplier===s));
-  if(!sups.length){toast("先新增產品才能盤點");return}
+  const sups=suppliersAll().filter(s=>db.items.some(i=>i.supplier===s&&onFloor(i)));
+  if(!sups.length){toast(db.items.length?"這一層還沒有產品":"先新增產品才能盤點");return}
   let sup=supF&&sups.includes(supF)?supF:sups[0];const qty={};
   openSheet('<h2>依品牌盤點</h2><div class="hint">填「現在手邊實際有幾個」，有改的會更新庫存並留下盤點紀錄。</div>'+
-    '<div class="chips" id="bsup"></div><div id="blist"></div>'+
+    (floorF?'<div class="hint">目前只顯示「'+esc(floorF)+'」的產品</div>':'')+'<div class="chips" id="bsup"></div><div id="blist"></div>'+
     '<div class="foot"><div class="total"><span id="bcount">還沒有修改</span></div><button class="btn pri wide" type="button" id="bgo" style="margin-top:8px">完成</button></div>');
   const changed=k=>k in qty&&qty[k]!==num(itemById(k)?.count);
   const sum=()=>{const n=Object.keys(qty).filter(changed).length;$("#bcount").textContent=n?"改了 "+n+" 項":"還沒有修改";$("#bgo").textContent=n?"儲存 "+n+" 項":"完成"};
   const draw=()=>{
     $("#bsup").innerHTML=sups.map(s=>'<button class="chip" type="button" data-bs="'+esc(s)+'" aria-pressed="'+(s===sup)+'">'+esc(s)+'</button>').join("");
-    $("#blist").innerHTML='<div class="card" style="margin-top:6px;padding-top:2px;padding-bottom:2px">'+db.items.filter(i=>i.supplier===sup).sort((a,b)=>byZh(a.name,b.name)).map(i=>{const v=i.id in qty?qty[i.id]:num(i.count);
+    $("#blist").innerHTML='<div class="card" style="margin-top:6px;padding-top:2px;padding-bottom:2px">'+db.items.filter(i=>i.supplier===sup&&onFloor(i)).sort((a,b)=>byZh(a.name,b.name)).map(i=>{const v=i.id in qty?qty[i.id]:num(i.count);
       return '<div class="bline'+(changed(i.id)?' on':'')+'"><div class="min"><div class="nm" style="font-weight:500">'+esc(i.name)+'</div><div class="sub">目前 '+num(i.count)+' '+esc(i.unit||"")+'</div></div>'+mini("bq",i.id,v)+'</div>'}).join("")+'</div>';
     sum();
   };
@@ -631,6 +635,7 @@ document.addEventListener("click",e=>{
   if("dsup" in d){dailySup=d.dsup;renderDaily();return}
   if("dcat" in d){dailyCat=d.dcat;renderDaily();return}
   if("catf" in d){catF=d.catf;renderStock();return}
+  if("flr" in d){floorF=d.flr;store.set("ss.floor",floorF);render();return}
   if("ostf" in d){orderStoreF=d.ostf;renderOrder();return}
   if(d.dq){const k=d.dq;dailyQty[k]=Math.max(0,(dailyQty[k]||0)+num(d.d));const inp=t.parentNode.querySelector("input");inp.value=dailyQty[k];t.closest(".bline").classList.toggle("on",dailyQty[k]>0);const n=Object.keys(dailyQty).filter(x=>dailyQty[x]>0).length;const b=document.querySelector("[data-usesave]");if(b)b.textContent=n?"扣庫存（"+n+" 項）":"扣庫存";return}
   if(d.usesave){saveDaily();return}
